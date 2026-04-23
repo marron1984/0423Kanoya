@@ -1,6 +1,7 @@
 """Generate SNS MP4 for 奈良春日 鹿のや, using on-repo photos + Kagura clip.
 
-Output: Sozai/post_kasuga_forest.mp4 (1080x1080, ~26s, 30fps).
+Output: Sozai/post_kasuga_forest.mp4 (1080x1350 / 4:5, 30fps).
+Typography: Shippori Mincho (bundled under Sozai/fonts).
 """
 
 from __future__ import annotations
@@ -18,10 +19,13 @@ REPO = ROOT.parent
 FRAMES = ROOT / "_frames"
 OUT = ROOT / "post_kasuga_forest.mp4"
 
-W, H = 1080, 1080
+# Instagram feed portrait (4:5)
+W, H = 1080, 1350
 FPS = 30
+ASPECT = W / H  # 0.8
 
-FONT_SERIF = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"
+FONT_SERIF = str(ROOT / "fonts" / "ShipporiMincho-Regular.ttf")
+FONT_SERIF_BOLD = str(ROOT / "fonts" / "ShipporiMincho-Bold.ttf")
 
 INK = (242, 239, 230)   # warm off-white (kinari)
 MIST = (201, 207, 195)
@@ -38,6 +42,8 @@ class PhotoScene:
     zoom_to: float = 1.08
     pan_from: tuple[float, float] = (0.5, 0.5)
     pan_to: tuple[float, float] = (0.5, 0.5)
+    caption_pos: str = "lower"  # "lower" | "center" | "upper"
+    veil: float = 0.0             # full-frame darkening (0..1)
 
 
 @dataclass
@@ -47,6 +53,8 @@ class VideoScene:
     duration: float
     lines: list[str]
     subtext: str
+    caption_pos: str = "lower"
+    veil: float = 0.0
 
 
 SCENES: list = [
@@ -56,7 +64,7 @@ SCENES: list = [
         subtext="",
         duration=4.5,
         zoom_from=1.00, zoom_to=1.08,
-        pan_from=(0.50, 0.55), pan_to=(0.50, 0.48),
+        pan_from=(0.46, 0.50), pan_to=(0.54, 0.50),
     ),
     PhotoScene(
         path=REPO / "7C1A5093.JPG",
@@ -64,7 +72,7 @@ SCENES: list = [
         subtext="― 春日山原始林 ―",
         duration=4.5,
         zoom_from=1.06, zoom_to=1.00,
-        pan_from=(0.42, 0.55), pan_to=(0.50, 0.55),
+        pan_from=(0.42, 0.50), pan_to=(0.50, 0.50),
     ),
     PhotoScene(
         path=REPO / "7C1A5102.JPG",
@@ -72,7 +80,7 @@ SCENES: list = [
         subtext="",
         duration=4.5,
         zoom_from=1.00, zoom_to=1.10,
-        pan_from=(0.52, 0.50), pan_to=(0.48, 0.52),
+        pan_from=(0.52, 0.50), pan_to=(0.48, 0.50),
     ),
     VideoScene(
         path=REPO / "鹿のや_神楽狂言_動画.mp4",
@@ -80,14 +88,17 @@ SCENES: list = [
         duration=4.5,
         lines=["森の気配とともに、", "祈りの音。"],
         subtext="",
+        caption_pos="upper",
     ),
     PhotoScene(
         path=REPO / "7C1A5107.JPG",
         lines=["奈良春日　鹿のや"],
         subtext="全5室・隠れ家オーベルジュ",
         duration=5.0,
-        zoom_from=1.00, zoom_to=1.05,
-        pan_from=(0.50, 0.55), pan_to=(0.50, 0.50),
+        zoom_from=1.04, zoom_to=1.00,
+        pan_from=(0.50, 0.45), pan_to=(0.50, 0.50),
+        caption_pos="center",
+        veil=0.45,
     ),
 ]
 
@@ -105,15 +116,21 @@ def scene_alpha(local_t: float, duration: float, fade_in=0.9, fade_out=0.9) -> f
 
 
 def crop_zoom(img: Image.Image, zoom: float, cx: float, cy: float) -> Image.Image:
+    """Crop a 4:5 region at (cx, cy) with zoom, then resize to WxH."""
     iw, ih = img.size
-    # crop a square at given center with width = min(iw,ih)/zoom
-    base = min(iw, ih)
-    crop_size = base / zoom
-    x = cx * iw - crop_size / 2
-    y = cy * ih - crop_size / 2
-    x = max(0, min(iw - crop_size, x))
-    y = max(0, min(ih - crop_size, y))
-    box = (int(x), int(y), int(x + crop_size), int(y + crop_size))
+    # The crop region has aspect ASPECT (W/H = 4/5 = 0.8). Fit by whichever
+    # side of the source is the binding constraint.
+    if iw / ih >= ASPECT:
+        crop_h = ih / zoom
+        crop_w = crop_h * ASPECT
+    else:
+        crop_w = iw / zoom
+        crop_h = crop_w / ASPECT
+    x = cx * iw - crop_w / 2
+    y = cy * ih - crop_h / 2
+    x = max(0, min(iw - crop_w, x))
+    y = max(0, min(ih - crop_h, y))
+    box = (int(x), int(y), int(x + crop_w), int(y + crop_h))
     return img.crop(box).resize((W, H), Image.LANCZOS)
 
 
@@ -140,8 +157,27 @@ def add_bottom_scrim(img: Image.Image) -> Image.Image:
     return Image.alpha_composite(img.convert("RGBA"), scrim).convert("RGB")
 
 
-def load_font(size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(FONT_SERIF, size=size, index=0)
+def add_top_scrim(img: Image.Image) -> Image.Image:
+    """Gradient scrim at top (for captions positioned high)."""
+    scrim = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(scrim)
+    top_h = int(H * 0.40)
+    for y in range(top_h):
+        t = 1.0 - (y / top_h)
+        a = int(140 * ease(t))
+        d.line([(0, y), (W, y)], fill=(0, 0, 0, a))
+    return Image.alpha_composite(img.convert("RGBA"), scrim).convert("RGB")
+
+
+def apply_veil(img: Image.Image, strength: float) -> Image.Image:
+    if strength <= 0:
+        return img
+    overlay = Image.new("RGB", (W, H), (10, 16, 14))
+    return Image.blend(img, overlay, strength)
+
+
+def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(FONT_SERIF_BOLD if bold else FONT_SERIF, size=size)
 
 
 def draw_caption(
@@ -177,6 +213,8 @@ def draw_caption(
     total_h = main_h + (50 + sub_h if subtext else 0)
     if position == "center":
         y = (H - total_h) // 2
+    elif position == "upper":
+        y = int(H * 0.12)
     else:
         y = int(H * 0.66)
 
@@ -190,7 +228,12 @@ def draw_caption(
         y += heights[i] + line_gap
 
     if subtext:
-        y_sub = y + 20 if position == "center" else int(H * 0.66) + main_h + 40
+        if position == "center":
+            y_sub = y + 20
+        elif position == "upper":
+            y_sub = int(H * 0.12) + main_h + 40
+        else:
+            y_sub = int(H * 0.66) + main_h + 40
         divider_w = 90
         dx = (W - divider_w) // 2
         draw.line(
@@ -222,9 +265,13 @@ def render_photo_scene(scene: PhotoScene, start_frame: int) -> int:
         cy = scene.pan_from[1] + (scene.pan_to[1] - scene.pan_from[1]) * te
         frame = crop_zoom(src, zoom, cx, cy)
         frame = add_vignette(frame, 0.30)
-        frame = add_bottom_scrim(frame)
+        frame = apply_veil(frame, scene.veil)
+        if scene.caption_pos == "upper":
+            frame = add_top_scrim(frame)
+        elif scene.caption_pos == "lower":
+            frame = add_bottom_scrim(frame)
         alpha = scene_alpha(k / FPS, scene.duration)
-        frame = draw_caption(frame, scene.lines, scene.subtext, alpha)
+        frame = draw_caption(frame, scene.lines, scene.subtext, alpha, scene.caption_pos)
         frame.save(FRAMES / f"f_{start_frame + k:05d}.png", "PNG")
     return n
 
@@ -235,10 +282,10 @@ def render_video_scene(scene: VideoScene, start_frame: int) -> int:
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir()
-    # extract frames at FPS, cropped to square 1080
+    # extract frames at FPS, cropped to 4:5 then scaled to WxH
     vf = (
         f"fps={FPS},"
-        f"crop='min(iw,ih)':'min(iw,ih)',"
+        f"crop='if(gt(iw/ih,{ASPECT}),ih*{ASPECT},iw)':'if(gt(iw/ih,{ASPECT}),ih,iw/{ASPECT})',"
         f"scale={W}:{H}:flags=lanczos"
     )
     cmd = [
@@ -257,9 +304,13 @@ def render_video_scene(scene: VideoScene, start_frame: int) -> int:
     for k, p in enumerate(files):
         frame = Image.open(p).convert("RGB")
         frame = add_vignette(frame, 0.25)
-        frame = add_bottom_scrim(frame)
+        frame = apply_veil(frame, scene.veil)
+        if scene.caption_pos == "upper":
+            frame = add_top_scrim(frame)
+        elif scene.caption_pos == "lower":
+            frame = add_bottom_scrim(frame)
         alpha = scene_alpha(k / FPS, scene.duration)
-        frame = draw_caption(frame, scene.lines, scene.subtext, alpha)
+        frame = draw_caption(frame, scene.lines, scene.subtext, alpha, scene.caption_pos)
         frame.save(FRAMES / f"f_{start_frame + k:05d}.png", "PNG")
     shutil.rmtree(tmp)
     return n

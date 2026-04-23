@@ -86,6 +86,15 @@ SCENES: list = [
         zoom_from=1.00, zoom_to=1.08,
         pan_from=(0.55, 0.50), pan_to=(0.48, 0.52),
     ),
+    PhotoScene(
+        path=REPO / "鹿のや_神楽狂言_画像.jpg",
+        lines=["春日の神域にて。"],
+        subtext="",
+        duration=3.0,
+        zoom_from=1.00, zoom_to=1.06,
+        pan_from=(0.42, 0.50), pan_to=(0.52, 0.50),
+        caption_pos="upper",
+    ),
     VideoScene(
         path=REPO / "鹿のや_神楽狂言_動画.mp4",
         start=1.0,

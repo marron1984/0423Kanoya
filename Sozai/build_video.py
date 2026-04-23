@@ -1,6 +1,6 @@
 """Generate SNS MP4 for 奈良春日 鹿のや, using on-repo photos + Kagura clip.
 
-Output: Sozai/post_kasuga_forest.mp4 (1080x566 / 1.91:1, 30fps).
+Output: Sozai/post_kasuga_forest.mp4 (1080x1920 / 9:16, 30fps).
 Typography: Shippori Mincho (bundled under Sozai/fonts).
 """
 
@@ -19,10 +19,10 @@ REPO = ROOT.parent
 FRAMES = ROOT / "_frames"
 OUT = ROOT / "post_kasuga_forest.mp4"
 
-# Instagram feed landscape (1.91:1)
-W, H = 1080, 566
+# Vertical (Reels / Stories) 9:16
+W, H = 1080, 1920
 FPS = 30
-ASPECT = W / H  # ~1.908
+ASPECT = W / H  # 0.5625
 
 FONT_SERIF = str(ROOT / "fonts" / "ShipporiMincho-Regular.ttf")
 FONT_SERIF_BOLD = str(ROOT / "fonts" / "ShipporiMincho-Bold.ttf")
@@ -55,6 +55,10 @@ class VideoScene:
     subtext: str
     caption_pos: str = "lower"
     veil: float = 0.0
+    zoom_from: float = 1.00
+    zoom_to: float = 1.00
+    pan_from: tuple[float, float] = (0.5, 0.5)
+    pan_to: tuple[float, float] = (0.5, 0.5)
 
 
 SCENES: list = [
@@ -63,24 +67,24 @@ SCENES: list = [
         lines=["世界遺産の森の、", "すぐ隣で目を覚ます。"],
         subtext="",
         duration=4.5,
-        zoom_from=1.00, zoom_to=1.08,
-        pan_from=(0.46, 0.50), pan_to=(0.54, 0.50),
+        zoom_from=1.00, zoom_to=1.06,
+        pan_from=(0.50, 0.55), pan_to=(0.50, 0.48),
     ),
     PhotoScene(
         path=REPO / "7C1A5093.JPG",
         lines=["千年以上、", "斧の音を知らない。"],
         subtext="― 春日山原始林 ―",
         duration=4.5,
-        zoom_from=1.06, zoom_to=1.00,
-        pan_from=(0.42, 0.50), pan_to=(0.50, 0.50),
+        zoom_from=1.04, zoom_to=1.00,
+        pan_from=(0.38, 0.55), pan_to=(0.45, 0.55),
     ),
     PhotoScene(
         path=REPO / "7C1A5102.JPG",
         lines=["その深い緑と、", "神域の静けさに守られて。"],
         subtext="",
         duration=4.5,
-        zoom_from=1.00, zoom_to=1.10,
-        pan_from=(0.52, 0.50), pan_to=(0.48, 0.50),
+        zoom_from=1.00, zoom_to=1.08,
+        pan_from=(0.55, 0.50), pan_to=(0.48, 0.52),
     ),
     VideoScene(
         path=REPO / "鹿のや_神楽狂言_動画.mp4",
@@ -89,6 +93,8 @@ SCENES: list = [
         lines=["森の気配とともに、", "祈りの音。"],
         subtext="",
         caption_pos="upper",
+        zoom_from=1.00, zoom_to=1.00,
+        pan_from=(0.42, 0.55), pan_to=(0.58, 0.55),
     ),
     PhotoScene(
         path=REPO / "7C1A5107.JPG",
@@ -96,9 +102,9 @@ SCENES: list = [
         subtext="全5室・隠れ家オーベルジュ",
         duration=5.0,
         zoom_from=1.04, zoom_to=1.00,
-        pan_from=(0.50, 0.45), pan_to=(0.50, 0.50),
+        pan_from=(0.50, 0.50), pan_to=(0.50, 0.52),
         caption_pos="center",
-        veil=0.45,
+        veil=0.40,
     ),
 ]
 
@@ -284,18 +290,14 @@ def render_video_scene(scene: VideoScene, start_frame: int) -> int:
     if tmp.exists():
         shutil.rmtree(tmp)
     tmp.mkdir()
-    # extract frames at FPS, cropped to 4:5 then scaled to WxH
-    vf = (
-        f"fps={FPS},"
-        f"crop='if(gt(iw/ih,{ASPECT}),ih*{ASPECT},iw)':'if(gt(iw/ih,{ASPECT}),ih,iw/{ASPECT})',"
-        f"scale={W}:{H}:flags=lanczos"
-    )
+    # Extract at source resolution; crop/zoom/pan happens per-frame in Python
+    # so the Kagura clip can share the same Ken Burns treatment as the stills.
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(scene.start),
         "-t", str(scene.duration),
         "-i", str(scene.path),
-        "-vf", vf,
+        "-vf", f"fps={FPS}",
         "-q:v", "2",
         str(tmp / "v_%05d.jpg"),
     ]
@@ -304,7 +306,13 @@ def render_video_scene(scene: VideoScene, start_frame: int) -> int:
     files = sorted(tmp.glob("v_*.jpg"))
     n = len(files)
     for k, p in enumerate(files):
-        frame = Image.open(p).convert("RGB")
+        t = k / max(1, n - 1)
+        te = ease(t)
+        zoom = scene.zoom_from + (scene.zoom_to - scene.zoom_from) * te
+        cx = scene.pan_from[0] + (scene.pan_to[0] - scene.pan_from[0]) * te
+        cy = scene.pan_from[1] + (scene.pan_to[1] - scene.pan_from[1]) * te
+        src = Image.open(p).convert("RGB")
+        frame = crop_zoom(src, zoom, cx, cy)
         frame = add_vignette(frame, 0.25)
         frame = apply_veil(frame, scene.veil)
         if scene.caption_pos == "upper":

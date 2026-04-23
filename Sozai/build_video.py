@@ -1,6 +1,6 @@
 """Generate SNS MP4 for 奈良春日 鹿のや, using on-repo photos + Kagura clip.
 
-Output: Sozai/post_kasuga_forest.mp4 (1080x1350 / 4:5, 30fps).
+Output: Sozai/post_kasuga_forest.mp4 (1080x566 / 1.91:1, 30fps).
 Typography: Shippori Mincho (bundled under Sozai/fonts).
 """
 
@@ -19,10 +19,10 @@ REPO = ROOT.parent
 FRAMES = ROOT / "_frames"
 OUT = ROOT / "post_kasuga_forest.mp4"
 
-# Instagram feed portrait (4:5)
-W, H = 1080, 1350
+# Instagram feed landscape (1.91:1)
+W, H = 1080, 566
 FPS = 30
-ASPECT = W / H  # 0.8
+ASPECT = W / H  # ~1.908
 
 FONT_SERIF = str(ROOT / "fonts" / "ShipporiMincho-Regular.ttf")
 FONT_SERIF_BOLD = str(ROOT / "fonts" / "ShipporiMincho-Bold.ttf")
@@ -191,8 +191,14 @@ def draw_caption(
     draw = ImageDraw.Draw(layer)
 
     longest = max((len(s) for s in lines), default=0)
-    main_size = 74 if longest > 10 else 86
-    sub_size = 30
+    # Scale typography with frame height so landscape frames stay readable.
+    h_scale = min(1.0, H / 900)
+    main_base = 74 if longest > 10 else 86
+    main_size = max(34, int(main_base * h_scale))
+    sub_size = max(18, int(30 * max(0.75, h_scale)))
+    sub_gap = int(40 * max(0.6, h_scale))
+    edge_margin = max(24, int(60 * h_scale))
+
     main_font = load_font(main_size)
     sub_font = load_font(sub_size)
 
@@ -210,13 +216,14 @@ def draw_caption(
         sub_w = sb[2] - sb[0]
         sub_h = sb[3] - sb[1]
 
-    total_h = main_h + (50 + sub_h if subtext else 0)
+    total_h = main_h + (sub_gap + sub_h if subtext else 0)
+
     if position == "center":
         y = (H - total_h) // 2
     elif position == "upper":
-        y = int(H * 0.12)
-    else:
-        y = int(H * 0.66)
+        y = edge_margin
+    else:  # "lower" — bottom-align so short frames still fit.
+        y = H - total_h - edge_margin
 
     a = int(255 * alpha)
     sa = int(170 * alpha)
@@ -228,16 +235,11 @@ def draw_caption(
         y += heights[i] + line_gap
 
     if subtext:
-        if position == "center":
-            y_sub = y + 20
-        elif position == "upper":
-            y_sub = int(H * 0.12) + main_h + 40
-        else:
-            y_sub = int(H * 0.66) + main_h + 40
-        divider_w = 90
+        y_sub = y + sub_gap - line_gap
+        divider_w = max(60, int(90 * h_scale))
         dx = (W - divider_w) // 2
         draw.line(
-            [(dx, y_sub - 18), (dx + divider_w, y_sub - 18)],
+            [(dx, y_sub - int(18 * h_scale)), (dx + divider_w, y_sub - int(18 * h_scale))],
             fill=(*MIST, int(180 * alpha)),
             width=1,
         )
